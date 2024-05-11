@@ -16,13 +16,13 @@
 #define SYS_GAME_OVER 3 // 结束
 bool needFresh = false; // 需要刷新屏幕
 int SYS_STATE = SYS_READY; // 当前系统状态
-char World[MAX_X][MAX_Y];// 世界
-char MovingWorld[MAX_X][MAX_Y];// 移动的世界
-char FutureWorld[MAX_X][MAX_Y];// 未来的世界，碰撞检测用
+char World[MAX_X][MAX_Y];// 静态世界，所有不再移动的方块
+char MovingWorld[MAX_X][MAX_Y];// 移动的世界，当前正在下落的方块
+char FutureWorld[MAX_X][MAX_Y];// 未来的世界，用来预测 砖块移动后，是否会碰撞
 uint64_t lastFallTime=0;// 下落计时器，上次下落时间
 int fallSpeed=3;// 下落速度
 
-bool buttomWait = false; // 方块到底, 等待一秒
+bool buttomWait = false; // 方块到底, 等待一个循环，期间图形还可以旋转或者平移，如果下一循环钱没操作吗，则动态的图形将被合并到静态世界中
 int bagArr[7]; // 方块随机结果储存数组
 int bagSize = 0; // 数组当前使用容量
 int bagIdx = 0; // 当前读取下标
@@ -30,14 +30,8 @@ int score = 0; // 游戏得分
 
 // 方块类型
 #define SHP_I 0
-#define SHP_J 1
-#define SHP_L 2
-#define SHP_O 3
-#define SHP_S 4
-#define SHP_T 5
-#define SHP_Z 6
 
-// 方块定义
+// 方块定义，4个值，对应方块旋转后的4x4坐标图型
 uint16_t SHAPE_ARR[7][4] = {
   {0x0F00,0x4444,0x0F00,0x4444}, // SHP_I
   {0x8E00,0x44C0,0xE200,0xC880}, // SHP_J
@@ -58,7 +52,7 @@ typedef struct {
 shape_obj MOVING_SHAPE;  // 当前方块
 
 ///-----------------------------红外相关------------------------------------------------
-#define VCC_PIN 13 // vvc 
+#define VCC_PIN 13 // 使用13针脚拉高电平为红外接收器供电
 #define RECV_PIN 14 // 接收红外针脚      D7
 IRrecv irrecv(RECV_PIN);// 配置接收针脚
 decode_results results;// 接收数据暂存
@@ -67,29 +61,28 @@ uint64_t last_ir_code = 0xCD123456;// 上一次的红外指令
 int startx = 2; // 显示起始坐标
 int starty = 0; // 显示起始坐标
 
-// 显示屏 ssd1306驱动  分辨率  未知厂商  1页缓存  软件模拟I2c   不转向，  时钟 
+// 显示屏 ssd1306驱动  分辨率  未知厂商 整屏刷新 硬件I2c   纵向屏幕
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R3, /* clock=*/ SCL, /* data=*/ SDA, /* reset=*/ U8X8_PIN_NONE);  
 
 // 主循环，游戏逻辑和显示刷新
 TaskHandle_t Task0;
 void mainTask(void *pvParameters){
   for(;;){
-    mainLoop();
+    if(SYS_STATE == SYS_PLAYING){
+      fallTicker(); // 下落计时器
+    }
+    doFresh(); // 屏幕刷新器
+    if(SYS_STATE == SYS_PLAYING){
+      delay(5);
+    }else{
+      delay(300);
+    }    
   }
-}
-
-void mainLoop(){
-  if(SYS_STATE == SYS_PLAYING){
-    fallTicker(); // 下落计时器
-  }
-
-  doFresh(); // 屏幕刷新器
-  delay(5);
 }
 
 // 控制循环。红外遥控指令处理
 TaskHandle_t Task1;
-void irrcLoop(void *pvParm){
+void irrcTask(void *pvParm){
   for(;;){
       
     // 收到信号
@@ -97,9 +90,6 @@ void irrcLoop(void *pvParm){
 
       // 只解析nec
       if(results.decode_type == NEC){
-       
-        Serial.print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>recording:");
-        Serial.println(results.value);      
 
         if(!results.repeat){
           last_ir_code = results.value; // 暂存最新指令  
@@ -107,54 +97,46 @@ void irrcLoop(void *pvParm){
         if(SYS_STATE == SYS_PLAYING){
           if(last_ir_code == 3442635660 || last_ir_code == 3442627500){       // ok up     
             turnShape();
-            buttomWait = false;         
-            delay(250);
-          }
-          if(last_ir_code == 3442625460){      //down
+            buttomWait = false; // 旋转可能导致本来到底了的图形又悬空了，要取消到底等待的标志，留给下一循环继续判断下坠逻辑    
+            delay(250); // 避免连发指令干扰操作
+          }else if(last_ir_code == 3442625460){      //down
             fall(1);
-          }
-          if(last_ir_code == 3442645350){ // left
-            moveShapeLeftOrRight(-1);
-            buttomWait = false;
+          }else if(last_ir_code == 3442649430){ // play/pause
+          
+            if(SYS_STATE == SYS_PLAYING){ //暂停游戏
+              SYS_STATE = SYS_PAUSE;
+            }else if(SYS_STATE == SYS_READY){ // 开始游戏
+              SYS_STATE = SYS_PLAYING;
+              randomGenerateShape();
+            }else if(SYS_STATE == SYS_PAUSE){ // 继续游戏
+              SYS_STATE = SYS_PLAYING;
+            }else if(SYS_STATE == SYS_GAME_OVER){ //游戏结束
+              init();
+            }
+
+            Serial.println(SYS_STATE);
+            delay(400);// 避免连发指令干扰操作
+          }else if(last_ir_code ==3442622910){ // 遥控本地键，重新开始游戏 
+            init();
+          }else {            
+            if(last_ir_code == 3442645350){ // left
+              moveShapeLeftOrRight(-1);
+            }
+            if(last_ir_code == 3442639740){ // right
+              moveShapeLeftOrRight(1);
+            }
+            buttomWait = false;// 平移可能导致本来到底了的图形又悬空了，要取消到底等待的标志，留给下一循环继续判断下坠逻辑 
             if(!results.repeat){
-              delay(150);
-            }            
-          }
-          if(last_ir_code == 3442639740){ // right
-            moveShapeLeftOrRight(1);
-            buttomWait = false;
-            if(!results.repeat){
-              delay(150);
-            }  
+              delay(150); // 首次按下延迟150ms接收信号，避免连发指令干扰操作
+            }   
           }      
         }
-
-        if(last_ir_code == 3442649430){ // play/pause
-          
-          if(SYS_STATE == SYS_PLAYING){
-            SYS_STATE = SYS_PAUSE;
-          }else if(SYS_STATE == SYS_READY){
-            SYS_STATE = SYS_PLAYING;             
-            randomGenerateShape();
-          }else if(SYS_STATE == SYS_PAUSE){
-            SYS_STATE = SYS_PLAYING;
-          }else if(SYS_STATE == SYS_GAME_OVER){
-            init();
-          }
-
-          Serial.println(SYS_STATE);
-          delay(400);
-        }
-        if(last_ir_code ==3442622910){ //init
-          init();
-        }
-      } 
-
+      }
       irrecv.resume();
     }
   }
 }
-
+// 方块随机算法，给出一组7个随即顺序的不同类型的方块
 void bag7(){  
   bagSize =0;
   bagIdx = 0; 
@@ -337,7 +319,7 @@ bool seeFutureAndMakeItTrue(shape_obj nextPosObj){
     }
   }
 
-  // 合并之后，方块变少，说明图形碰撞了，返回false
+  // 未来世界的方块比当前动态静态世界的方块数量少，说明图形碰撞或者超出了游戏边界，返回false
   bool rs = (movingWorldBoxNum + worldBoxNum == uionWorldBoxNum);
   if(rs){
     MOVING_SHAPE = nextPosObj;
@@ -487,7 +469,7 @@ void setup() {
   init();// 游戏初始化
 
   xTaskCreatePinnedToCore(mainTask, "mainTask", 10000, NULL, 1, &Task0, 0); // 大核运行主线程
-  xTaskCreatePinnedToCore(irrcLoop, "irrcLoop", 10000, NULL, 1, &Task1, 1); // 小核处理红外遥控指令
+  xTaskCreatePinnedToCore(irrcTask, "irrcTask", 10000, NULL, 1, &Task1, 1); // 小核处理红外遥控指令
   Serial.println("");
   Serial.println("started!");
 }
