@@ -100,22 +100,7 @@ void irrcTask(void *pvParm){
             buttomWait = false; // 旋转可能导致本来到底了的图形又悬空了，要取消到底等待的标志，留给下一循环继续判断下坠逻辑    
             delay(250); // 避免连发指令干扰操作
           }else if(last_ir_code == 3442625460){      //down
-            fall(1);
-          }else if(last_ir_code == 3442649430){ // play/pause
-          
-            if(SYS_STATE == SYS_PLAYING){ //暂停游戏
-              SYS_STATE = SYS_PAUSE;
-            }else if(SYS_STATE == SYS_READY){ // 开始游戏
-              SYS_STATE = SYS_PLAYING;
-              randomGenerateShape();
-            }else if(SYS_STATE == SYS_PAUSE){ // 继续游戏
-              SYS_STATE = SYS_PLAYING;
-            }else if(SYS_STATE == SYS_GAME_OVER){ //游戏结束
-              init();
-            }
-
-            Serial.println(SYS_STATE);
-            delay(400);// 避免连发指令干扰操作
+            fall(1);fall(1);
           }else if(last_ir_code ==3442622910){ // 遥控本地键，重新开始游戏 
             init();
           }else {            
@@ -131,6 +116,23 @@ void irrcTask(void *pvParm){
             }   
           }      
         }
+        
+        if(last_ir_code == 3442649430){ // play/pause
+          
+            if(SYS_STATE == SYS_PLAYING){ //暂停游戏
+              SYS_STATE = SYS_PAUSE;
+            }else if(SYS_STATE == SYS_READY){ // 开始游戏
+              SYS_STATE = SYS_PLAYING;
+              randomGenerateShape();
+            }else if(SYS_STATE == SYS_PAUSE){ // 继续游戏
+              SYS_STATE = SYS_PLAYING;
+            }else if(SYS_STATE == SYS_GAME_OVER){ //游戏结束
+              init();
+            }
+
+            Serial.println(SYS_STATE);
+            delay(400);// 避免连发指令干扰操作
+          }
       }
       irrecv.resume();
     }
