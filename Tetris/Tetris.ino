@@ -57,6 +57,7 @@ shape_obj MOVING_SHAPE;  // 当前方块
 IRrecv irrecv(RECV_PIN);// 配置接收针脚
 decode_results results;// 接收数据暂存
 uint64_t last_ir_code = 0xCD123456;// 上一次的红外指令
+uint64_t last_ir_time=0;// 计时器，上次时间
 ///-----------------------------显示相关------------------------------------------------
 int startx = 2; // 显示起始坐标
 int starty = 0; // 显示起始坐标
@@ -86,24 +87,33 @@ void irrcTask(void *pvParm){
   for(;;){
       
     // 收到信号
-    if(irrecv.decode(&results)){
+    if(irrecv.decode(&results)){    
 
       // 只解析nec
       if(results.decode_type == NEC){
 
-        if(!results.repeat){
-          last_ir_code = results.value; // 暂存最新指令  
+        if(results.repeat && (millis() - last_ir_time) < 150){
+          irrecv.resume();
+          continue;
         }
+
+        if(!results.repeat){
+          last_ir_code = results.value; // 暂存最新指令
+        }
+
         if(SYS_STATE == SYS_PLAYING){
           if(last_ir_code == 3442635660 || last_ir_code == 3442627500){       // ok up     
             turnShape();
             buttomWait = false; // 旋转可能导致本来到底了的图形又悬空了，要取消到底等待的标志，留给下一循环继续判断下坠逻辑    
-            delay(250); // 避免连发指令干扰操作
           }else if(last_ir_code == 3442625460){      //down
-            fall(1);fall(1);
+            fall(1);
+            delay(55);
+            fall(1);
+            delay(55);
+            fall(1);
           }else if(last_ir_code ==3442622910){ // 遥控本地键，重新开始游戏 
             init();
-          }else {            
+          }else {
             if(last_ir_code == 3442645350){ // left
               moveShapeLeftOrRight(-1);
             }
@@ -111,10 +121,8 @@ void irrcTask(void *pvParm){
               moveShapeLeftOrRight(1);
             }
             buttomWait = false;// 平移可能导致本来到底了的图形又悬空了，要取消到底等待的标志，留给下一循环继续判断下坠逻辑 
-            if(!results.repeat){
-              delay(150); // 首次按下延迟150ms接收信号，避免连发指令干扰操作
-            }   
-          }      
+          }
+          last_ir_time = millis();      
         }
         
         if(last_ir_code == 3442649430){ // play/pause
@@ -132,8 +140,9 @@ void irrcTask(void *pvParm){
 
             Serial.println(SYS_STATE);
             delay(400);// 避免连发指令干扰操作
-          }
+          }        
       }
+      
       irrecv.resume();
     }
   }
@@ -332,7 +341,7 @@ bool seeFutureAndMakeItTrue(shape_obj nextPosObj){
 
 // 下坠计时器
 void fallTicker(){
-  uint64_t fallDuration = 1000 - fallSpeed*100; // 下落间隔时间
+  uint64_t fallDuration = 1000 - fallSpeed*50; // 下落间隔时间
 
   // 到时间啊
   if((millis()-lastFallTime) >= fallDuration){
@@ -427,7 +436,7 @@ void doFresh() {
   }
   u8g2.clearBuffer(); 
   if(SYS_STATE == SYS_READY){
-    u8g2.setFont(u8g2_font_t0_12b_tf);
+    u8g2.setFont(u8g2_font_t0_11b_tf);
     u8g2.setCursor(8,60);
     u8g2.print("TETRIS");
     
@@ -446,9 +455,12 @@ void doFresh() {
       }
     }
   }else{
-    u8g2.setFont(u8g2_font_t0_12b_tf);
-    u8g2.setCursor(0,60);
+    u8g2.setFont(u8g2_font_t0_11b_tf);
+    u8g2.setCursor(0,55);
     u8g2.print("GAME OVER");
+    u8g2.setCursor(0,70);
+    u8g2.print("SCORE:");
+    u8g2.print(score);
   }
   u8g2.sendBuffer();
   needFresh = false;
